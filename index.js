@@ -48,7 +48,7 @@ app.get("/studios", async (req, res) => {
 // inividual crated my-bookings data
 app.get('/my-listings/:email', async(req, res)=>{
 const email = req.params.email;
-console.log(email)
+// console.log(email)
 const result = await studiosCollection.find({creatorEmail: email}).toArray();
 res.send(result)
 })
@@ -103,9 +103,9 @@ app.patch('/studios/my-bookings/:id', async (req, res) => {
 // get individual my-booking data
 app.get("/studios/my-bookings/:email", async (req, res) => {
   const email = req.params.email;
-  console.log(email, 'email')
+  // console.log(email, 'email')
   const result = await studiosBookingCollection.find({userEmail: email}).toArray();
-  console.log(result, "result")
+  // console.log(result, "result")
   res.send(result)
 }) 
 
