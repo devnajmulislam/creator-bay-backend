@@ -9,7 +9,7 @@ const PORT = 5000;
 const app = express();
 
 // middlewares
-// app.use(cors())
+app.use(cors())
 app.use(express.json());
 
 // connect DB
@@ -25,8 +25,25 @@ export async function connectToMongoDB() {
   }
 }
 
-connectToMongoDB()
+const connectClient = await connectToMongoDB() // get DB
+const db = connectClient.db("creator-bay") // create Database
+const studiosCollection = db.collection("studios") // create a collection called studios
 
+// API requests
+
+// Create data to DB
+app.post('/studios', async(req, res) => {
+  const studioData = req.body;
+  const result = await studiosCollection.insertOne(studioData);
+  res.send(result)
+})
+
+
+// get all datas from studeios collection 
+app.get('/studios', async(req, res)=> {
+const result = await studiosCollection.find().toArray();
+res.send(result); 
+})
 
 
 app.get('/', (req, res)=> {
