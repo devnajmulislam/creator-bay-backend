@@ -144,9 +144,55 @@ app.delete("/my-listings/:id", verifyToken, async (req, res) => {
 });
 
 // my-booking api
+// app.post("/studios/my-bookings", verifyToken, async (req, res) => {
+//   try {
+//     const { studiosBookingCollection } = await getCollections();
+//     const bookingData = req.body;
+//     const result = await studiosBookingCollection.insertOne(bookingData);
+//     res.send(result);
+//   } catch (err) {
+//     res.status(500).send({ error: err.message });
+//   }
+// });
+
+
+// my-booking api with double-booking collision prevention
 app.post("/studios/my-bookings", verifyToken, async (req, res) => {
   try {
     const { studiosBookingCollection } = await getCollections();
+    const { studioId, date, startTime, duration } = req.body;
+
+    if (!studioId || !date || !startTime || !duration) {
+      return res.status(400).json({ error: "Missing required booking fields." });
+    }
+
+    // Calculate incoming booking time window in minutes from midnight
+    const [startHour, startMin] = startTime.split(":").map(Number);
+    const newStartMinutes = startHour * 60 + startMin;
+    const newEndMinutes = newStartMinutes + Number(duration) * 60;
+
+    // Fetch existing confirmed bookings for the same studio and date
+    const existingConfirmed = await studiosBookingCollection.find({
+      studioId: studioId,
+      date: date,
+      status: "Confirmed",
+    }).toArray();
+
+    // Check for time overlap
+    for (const b of existingConfirmed) {
+      if (!b.startTime || !b.duration) continue;
+      const [bHour, bMin] = b.startTime.split(":").map(Number);
+      const bStartMinutes = bHour * 60 + bMin;
+      const bEndMinutes = bStartMinutes + Number(b.duration) * 60;
+
+      // Overlap condition: (StartA < EndB) && (EndA > StartB)
+      if (newStartMinutes < bEndMinutes && newEndMinutes > bStartMinutes) {
+        return res.status(400).json({
+          error: "This time slot conflicts with an existing confirmed reservation.",
+        });
+      }
+    }
+
     const bookingData = req.body;
     const result = await studiosBookingCollection.insertOne(bookingData);
     res.send(result);
@@ -154,6 +200,7 @@ app.post("/studios/my-bookings", verifyToken, async (req, res) => {
     res.status(500).send({ error: err.message });
   }
 });
+
 
 // cancel individual my-booking data
 app.patch("/studios/my-bookings/:id", verifyToken, async (req, res) => {
