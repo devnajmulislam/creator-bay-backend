@@ -3,7 +3,7 @@ import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const app = express();
 
 // middlewares
@@ -15,101 +15,155 @@ const client = new MongoClient(process.env.MONGO_URI);
 
 export async function connectToMongoDB() {
   try {
-    await client.connect();
-    console.log("You successfully connected to MongoDB!");
+    if (!client.topology || !client.topology.isConnected()) {
+      await client.connect();
+      console.log("You successfully connected to MongoDB!");
+    }
     return client;
   } catch (err) {
     console.dir(err);
   }
 }
 
-const connectClient = await connectToMongoDB(); // get DB
-const db = connectClient.db("creator-bay"); // create Database
-const studiosCollection = db.collection("studios"); // create a collection called studios
-const studiosBookingCollection = db.collection("studiosBooking"); // create a collection for my-booking
+// Helper
+async function getCollections() {
+  const connectClient = await connectToMongoDB();
+  const db = connectClient.db("creator-bay");
+  return {
+    studiosCollection: db.collection("studios"),
+    studiosBookingCollection: db.collection("studiosBooking"),
+  };
+}
 
 // API requests
 
 // Create data to DB
 app.post("/studios", async (req, res) => {
-  const studioData = req.body;
-  const result = await studiosCollection.insertOne(studioData);
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const studioData = req.body;
+    const result = await studiosCollection.insertOne(studioData);
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // get all datas from studeios collection
 app.get("/studios", async (req, res) => {
-  const result = await studiosCollection.find().toArray();
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const result = await studiosCollection.find().toArray();
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
-// inividual crated my-bookings data
+// inividual crated my-listings data
 app.get("/my-listings/:email", async (req, res) => {
-  const email = req.params.email;
-  // console.log(email)
-  const result = await studiosCollection
-    .find({ creatorEmail: email })
-    .toArray();
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const email = req.params.email;
+    const result = await studiosCollection
+      .find({ creatorEmail: email })
+      .toArray();
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // single studio item api
 app.get("/studios/:id", async (req, res) => {
-  const id = req.params.id;
-  // console.log(id, "id");
-  const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
-
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const id = req.params.id;
+    const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // update individual data - my-listing
 app.patch("/my-listings/:id", async (req, res) => {
-  const id = req.params.id;
-  const updatedData = req.body;
-  const result = await studiosCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: updatedData },
-  );
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const id = req.params.id;
+    const updatedData = req.body;
+    const result = await studiosCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData },
+    );
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // delete individual data - my-listing
 app.delete("/my-listings/:id", async (req, res) => {
-  const id = req.params.id;
-  const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
-  res.send(result);
+  try {
+    const { studiosCollection } = await getCollections();
+    const id = req.params.id;
+    const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // my-booking api
 app.post("/studios/my-bookings", async (req, res) => {
-  const bookingData = req.body;
-  const result = await studiosBookingCollection.insertOne(bookingData);
-  res.send(result);
+  try {
+    const { studiosBookingCollection } = await getCollections();
+    const bookingData = req.body;
+    const result = await studiosBookingCollection.insertOne(bookingData);
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // cancel individual my-booking data
 app.patch("/studios/my-bookings/:id", async (req, res) => {
-  const id = req.params.id;
-  const result = await studiosBookingCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { status: "Cancelled" } },
-  );
-  res.send(result);
+  try {
+    const { studiosBookingCollection } = await getCollections();
+    const id = req.params.id;
+    const result = await studiosBookingCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "Cancelled" } },
+    );
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 // get individual my-booking data
 app.get("/studios/my-bookings/:email", async (req, res) => {
-  const email = req.params.email;
-  const result = await studiosBookingCollection
-    .find({ userEmail: email })
-    .toArray();
-  res.send(result);
+  try {
+    const { studiosBookingCollection } = await getCollections();
+    const email = req.params.email;
+    const result = await studiosBookingCollection
+      .find({ userEmail: email })
+      .toArray();
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
 });
 
 app.get("/", (req, res) => {
   res.send("Server is OK to assist!");
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// listen locally
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+export default app;
