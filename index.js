@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const PORT = process.env.PORT || 5000;
 const app = express();
@@ -35,10 +36,38 @@ async function getCollections() {
   };
 }
 
+// Security middleware
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.FRONTEND_URL}/api/auth/jwks`),
+  );
+
+  try {
+    const { payload } = jwtVerify(token, JWKS, {
+      issuer: `${process.env.FRONTEND_URL}/api/auth`,
+      audience: "creator-bay-frontend",
+    });
+    req.user = payload;
+  } catch (error) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  next();
+};
+
 // API requests
 
 // Create data to DB
-app.post("/studios", async (req, res) => {
+app.post("/studios", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
     const studioData = req.body;
@@ -60,8 +89,8 @@ app.get("/studios", async (req, res) => {
   }
 });
 
-// inividual crated my-listings data
-app.get("/my-listings/:email", async (req, res) => {
+// inividual my-listings data
+app.get("/my-listings/:email", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
     const email = req.params.email;
@@ -87,7 +116,7 @@ app.get("/studios/:id", async (req, res) => {
 });
 
 // update individual data - my-listing
-app.patch("/my-listings/:id", async (req, res) => {
+app.patch("/my-listings/:id", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
     const id = req.params.id;
@@ -103,7 +132,7 @@ app.patch("/my-listings/:id", async (req, res) => {
 });
 
 // delete individual data - my-listing
-app.delete("/my-listings/:id", async (req, res) => {
+app.delete("/my-listings/:id", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
     const id = req.params.id;
@@ -115,7 +144,7 @@ app.delete("/my-listings/:id", async (req, res) => {
 });
 
 // my-booking api
-app.post("/studios/my-bookings", async (req, res) => {
+app.post("/studios/my-bookings", verifyToken, async (req, res) => {
   try {
     const { studiosBookingCollection } = await getCollections();
     const bookingData = req.body;
@@ -127,7 +156,7 @@ app.post("/studios/my-bookings", async (req, res) => {
 });
 
 // cancel individual my-booking data
-app.patch("/studios/my-bookings/:id", async (req, res) => {
+app.patch("/studios/my-bookings/:id", verifyToken, async (req, res) => {
   try {
     const { studiosBookingCollection } = await getCollections();
     const id = req.params.id;
@@ -142,7 +171,7 @@ app.patch("/studios/my-bookings/:id", async (req, res) => {
 });
 
 // get individual my-booking data
-app.get("/studios/my-bookings/:email", async (req, res) => {
+app.get("/studios/my-bookings/:email", verifyToken, async (req, res) => {
   try {
     const { studiosBookingCollection } = await getCollections();
     const email = req.params.email;
