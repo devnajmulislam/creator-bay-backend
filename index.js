@@ -16,13 +16,11 @@ const client = new MongoClient(process.env.MONGO_URI);
 
 export async function connectToMongoDB() {
   try {
-    if (!client.topology || !client.topology.isConnected()) {
-      await client.connect();
-      console.log("You successfully connected to MongoDB!");
-    }
+    await client.connect();
     return client;
   } catch (err) {
-    console.dir(err);
+    console.error("MongoDB connection failed:", err);
+    throw err;
   }
 }
 
@@ -32,36 +30,43 @@ async function getCollections() {
   const db = connectClient.db("creator-bay");
   return {
     studiosCollection: db.collection("studios"),
-    studiosBookingCollection: db.collection("studiosBooking"),
+    bookingsCollection: db.collection("studiosBooking"),
   };
 }
 
 // Security middleware
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).send({ message: "Unauthorized access" });
-  }
-  const token = authHeader.split(" ")[1];
+  const cookieHeader = req.headers.cookie || "";
+  const cookieMatch = cookieHeader.match(/(?:^|;\s*)creatorbay_jwt=([^;]+)/);
+
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : cookieMatch
+      ? decodeURIComponent(cookieMatch[1])
+      : null;
+
   if (!token) {
     return res.status(401).send({ message: "Unauthorized access" });
   }
 
+  const frontendUrl = process.env.FRONTEND_URL.replace(/\/$/, "");
   const JWKS = createRemoteJWKSet(
-    new URL(`${process.env.FRONTEND_URL}/api/auth/jwks`),
+    new URL(`${frontendUrl}/api/auth/jwks`),
   );
 
   try {
-    const { payload } = jwtVerify(token, JWKS, {
-      issuer: `${process.env.FRONTEND_URL}/api/auth`,
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: `${frontendUrl}/api/auth`,
       audience: "creator-bay-frontend",
     });
+
     req.user = payload;
+    return next();
   } catch (error) {
+    console.error("JWT verification failed:", error);
     return res.status(401).send({ message: "Unauthorized access" });
   }
-
-  next();
 };
 
 // API requests
@@ -70,7 +75,16 @@ const verifyToken = (req, res, next) => {
 app.post("/studios", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
-    const studioData = req.body;
+
+    const studioData = {
+      ...req.body,
+      creatorEmail: req.user.email,
+      creatorName: req.user.name,
+      rating: Number(req.body.rating) || 4.8,
+      reviewCount: 0,
+      createdAt: new Date(),
+    };
+
     const result = await studiosCollection.insertOne(studioData);
     res.send(result);
   } catch (err) {
@@ -82,7 +96,16 @@ app.post("/studios", verifyToken, async (req, res) => {
 app.get("/studios", async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
-    const result = await studiosCollection.find().toArray();
+    const limit = Number(req.query.limit) || 0;
+    const sort =
+      req.query.sort === "rating"
+        ? { rating: -1, createdAt: -1 }
+        : { createdAt: -1 };
+
+    let cursor = studiosCollection.find().sort(sort);
+    if (limit > 0) cursor = cursor.limit(limit);
+
+    const result = await cursor.toArray();
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -93,10 +116,10 @@ app.get("/studios", async (req, res) => {
 app.get("/my-listings/:email", verifyToken, async (req, res) => {
   try {
     const { studiosCollection } = await getCollections();
-    const email = req.params.email;
     const result = await studiosCollection
-      .find({ creatorEmail: email })
+      .find({ creatorEmail: req.user.email })
       .toArray();
+
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -105,10 +128,15 @@ app.get("/my-listings/:email", verifyToken, async (req, res) => {
 
 // single studio item api
 app.get("/studios/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).send({ message: "Invalid studio id" });
+  }
+
   try {
     const { studiosCollection } = await getCollections();
-    const id = req.params.id;
-    const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
+    const result = await studiosCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -117,14 +145,24 @@ app.get("/studios/:id", async (req, res) => {
 
 // update individual data - my-listing
 app.patch("/my-listings/:id", verifyToken, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).send({ message: "Invalid studio id" });
+  }
+
   try {
     const { studiosCollection } = await getCollections();
-    const id = req.params.id;
-    const updatedData = req.body;
     const result = await studiosCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updatedData },
+      {
+        _id: new ObjectId(req.params.id),
+        creatorEmail: req.user.email,
+      },
+      { $set: req.body },
     );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Listing not found" });
+    }
+
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -133,68 +171,62 @@ app.patch("/my-listings/:id", verifyToken, async (req, res) => {
 
 // delete individual data - my-listing
 app.delete("/my-listings/:id", verifyToken, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).send({ message: "Invalid studio id" });
+  }
+
   try {
     const { studiosCollection } = await getCollections();
-    const id = req.params.id;
-    const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
+    const result = await studiosCollection.deleteOne({
+      _id: new ObjectId(req.params.id),
+      creatorEmail: req.user.email,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Listing not found" });
+    }
+
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
   }
 });
 
-// my-booking api
-// app.post("/studios/my-bookings", verifyToken, async (req, res) => {
-//   try {
-//     const { studiosBookingCollection } = await getCollections();
-//     const bookingData = req.body;
-//     const result = await studiosBookingCollection.insertOne(bookingData);
-//     res.send(result);
-//   } catch (err) {
-//     res.status(500).send({ error: err.message });
-//   }
-// });
-
-
 // my-booking api with double-booking collision prevention
 app.post("/studios/my-bookings", verifyToken, async (req, res) => {
   try {
-    const { studiosBookingCollection } = await getCollections();
-    const { studioId, date, startTime, duration } = req.body;
+    const { bookingsCollection } = await getCollections();
+    const { studioId, date, startTime } = req.body;
 
-    if (!studioId || !date || !startTime || !duration) {
-      return res.status(400).json({ error: "Missing required booking fields." });
+    if (!studioId || !date || !startTime) {
+      return res.status(400).send({
+        error: "Studio, date, and start time are required.",
+      });
     }
 
-    // Calculate incoming booking time window in minutes from midnight
-    const [startHour, startMin] = startTime.split(":").map(Number);
-    const newStartMinutes = startHour * 60 + startMin;
-    const newEndMinutes = newStartMinutes + Number(duration) * 60;
-
-    // Fetch existing confirmed bookings for the same studio and date
-    const existingConfirmed = await studiosBookingCollection.find({
-      studioId: studioId,
-      date: date,
+    const conflict = await bookingsCollection.findOne({
+      studioId,
+      date,
+      startTime,
       status: "Confirmed",
-    }).toArray();
+    });
 
-    // Check for time overlap
-    for (const b of existingConfirmed) {
-      if (!b.startTime || !b.duration) continue;
-      const [bHour, bMin] = b.startTime.split(":").map(Number);
-      const bStartMinutes = bHour * 60 + bMin;
-      const bEndMinutes = bStartMinutes + Number(b.duration) * 60;
-
-      // Overlap condition: (StartA < EndB) && (EndA > StartB)
-      if (newStartMinutes < bEndMinutes && newEndMinutes > bStartMinutes) {
-        return res.status(400).json({
-          error: "This time slot conflicts with an existing confirmed reservation.",
-        });
-      }
+    if (conflict) {
+      return res.status(409).send({
+        error: "This studio is already booked for that date and time.",
+      });
     }
 
-    const bookingData = req.body;
-    const result = await studiosBookingCollection.insertOne(bookingData);
+    const bookingData = {
+      ...req.body,
+      email: req.user.email,
+      userEmail: req.user.email,
+      name: req.user.name,
+      status: "Pending",
+      createdAt: new Date(),
+    };
+
+    const result = await bookingsCollection.insertOne(bookingData);
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -204,13 +236,23 @@ app.post("/studios/my-bookings", verifyToken, async (req, res) => {
 
 // cancel individual my-booking data
 app.patch("/studios/my-bookings/:id", verifyToken, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).send({ message: "Invalid booking id" });
+  }
+
   try {
-    const { studiosBookingCollection } = await getCollections();
-    const id = req.params.id;
-    const result = await studiosBookingCollection.updateOne(
-      { _id: new ObjectId(id) },
+    const { bookingsCollection } = await getCollections();
+    const result = await bookingsCollection.updateOne(
+      {
+        _id: new ObjectId(req.params.id),
+        $or: [
+          { userEmail: req.user.email },
+          { email: req.user.email },
+        ],
+      },
       { $set: { status: "Cancelled" } },
     );
+
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
@@ -220,11 +262,16 @@ app.patch("/studios/my-bookings/:id", verifyToken, async (req, res) => {
 // get individual my-booking data
 app.get("/studios/my-bookings/:email", verifyToken, async (req, res) => {
   try {
-    const { studiosBookingCollection } = await getCollections();
-    const email = req.params.email;
-    const result = await studiosBookingCollection
-      .find({ userEmail: email })
+    const { bookingsCollection } = await getCollections();
+    const result = await bookingsCollection
+      .find({
+        $or: [
+          { userEmail: req.user.email },
+          { email: req.user.email },
+        ],
+      })
       .toArray();
+
     res.send(result);
   } catch (err) {
     res.status(500).send({ error: err.message });
